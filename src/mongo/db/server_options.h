@@ -29,6 +29,11 @@ namespace mongo {
             slowMS(100), defaultLocalThresholdMillis(15), moveParanoia(true),
             noUnixSocket(false), doFork(0), socket("/tmp"), maxConns(DEFAULT_MAX_CONN),
             logAppend(false), logWithSyslog(false), isHttpInterfaceEnabled(false)
+
+#ifdef _WIN32
+            , isDataFileZeroingNeeded(true)
+#endif
+
         {
             started = time(0);
         }
@@ -75,6 +80,11 @@ namespace mongo {
         std::string logpath;   // Path to log file, if logging to a file; otherwise, empty.
         bool logAppend;        // True if logging to a file in append mode.
         bool logWithSyslog;    // True if logging to syslog; must not be set if logpath is set.
+
+#ifdef _WIN32
+        bool isDataFileZeroingNeeded;
+#endif
+
         int syslogFacility;    // Facility used when appending messages to the syslog.
 
         bool isHttpInterfaceEnabled; // True if the dbwebserver should be enabled.
