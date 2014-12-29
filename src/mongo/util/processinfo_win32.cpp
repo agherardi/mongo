@@ -291,7 +291,7 @@ namespace mongo {
                             if (getInstalledHotfixIDs(hotfixIDs)) {
                               for(list< string >::const_iterator i = hotfixIDs.begin(); i != hotfixIDs.end(); ++i) {
                                 string hotfixID = *i;
-                                if (hotfixID == "KB2731284" || hotfixID == "KB2840149") {
+                                if (hotfixID == "KB2731284") {
                                   log() << "Hotfix for KB2731284 is installed, no need to zero-out data files";
                                   fileZeroNeeded = false;
                                   break;
