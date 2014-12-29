@@ -34,11 +34,18 @@
 #include <iostream>
 #include <psapi.h>
 #include <wbemidl.h>
+#include <comdef.h>
 
 #include "mongo/util/processinfo.h"
 #include "mongo/util/log.h"
 
 using namespace std;
+
+_COM_SMARTPTR_TYPEDEF(IWbemLocator, __uuidof(IWbemLocator));
+_COM_SMARTPTR_TYPEDEF(IWbemServices, __uuidof(IWbemServices));
+_COM_SMARTPTR_TYPEDEF(IWbemClassObject, __uuidof(IWbemClassObject));
+_COM_SMARTPTR_TYPEDEF(IEnumWbemClassObject, __uuidof(IEnumWbemClassObject));
+
 
 namespace mongo {
 
@@ -117,29 +124,15 @@ namespace mongo {
 #endif
     }
 
-    string BSTRToString(const BSTR bstr, int cp = CP_UTF8) {
-        string result;
-
-        if (!bstr) {
-            return result;
-        }
-
-        int len = SysStringLen(bstr);
-        int res = WideCharToMultiByte(cp, 0, bstr, len, NULL, 0, NULL, NULL);
-        if (res > 0) {
-            result.resize(res);
-            WideCharToMultiByte(cp, 0, bstr, len, &result[0], res, NULL, NULL);
-        }
+    string BSTRToString(const BSTR bstr) {
+        char *temp = _com_util::ConvertBSTRToString(bstr);
+        string result(temp);
+        delete [] temp;
         return result;
     }
-
+        
     bool getInstalledHotfixIDsInternal(list<string> &hotfixIDs) {
-        HRESULT hr;
-        IWbemLocator *pLoc;
-        IWbemServices *pSvc;
-        IEnumWbemClassObject *pEnum;
-
-        hr = CoInitializeSecurity(
+        HRESULT hr = CoInitializeSecurity(
             NULL,                        // Security descriptor    
             -1,                          // COM negotiates authentication service
             NULL,                        // Authentication services
@@ -150,17 +143,20 @@ namespace mongo {
             EOAC_NONE,                   // Additional capabilities of the client or server
             NULL);                       // Reserved
         if (FAILED(hr)) {
+            warning() << "CoInitializeSecurity failed with " << hr;
             return false;
         }
 
-        hr = CoCreateInstance(CLSID_WbemLocator, 0,
-            CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID *)&pLoc);
-        if (FAILED(hr)) {
+        IWbemLocatorPtr pLoc(CLSID_WbemLocator);
+        if (!pLoc) {
+            warning() << "Cannot create IWbemLocator object";
             return false;
         }
 
+        IWbemServicesPtr pSvc;
+        _bstr_t cimV2Namespace(L"ROOT\\CIMV2");
         hr = pLoc->ConnectServer(
-            BSTR(L"ROOT\\CIMV2"),   //namespace
+            cimV2Namespace,
             NULL,                   // User name 
             NULL,                   // User password
             0,                      // Locale 
@@ -168,29 +164,27 @@ namespace mongo {
             0,                      // Authority 
             0,                      // Context object 
             &pSvc);                 // IWbemServices proxy
-        pLoc->Release();
         if (FAILED(hr)) {
+            warning() << "IWbemLocator::ConnectServer failed with " << hr;
             return false;
         }
 
-        BSTR language = SysAllocString(L"WQL");
-        BSTR query = SysAllocString(L"SELECT HotFixID FROM Win32_QuickFixEngineering");
-
+        _bstr_t language(L"WQL");
+        _bstr_t query(L"SELECT HotFixID FROM Win32_QuickFixEngineering");
+        IEnumWbemClassObjectPtr pEnum;
         hr = pSvc->ExecQuery(
             language,
             query,
             WBEM_FLAG_FORWARD_ONLY,         // Flags
             0,                              // Context
             &pEnum);
-        SysFreeString(language);
-        SysFreeString(query);
-        pSvc->Release();
         if (FAILED(hr)) {
+            warning() << "IWbemServices::ExecQuery failed with " << hr;
             return false;
         }
 
         for (;;) {
-            IWbemClassObject *pObj;
+            IWbemClassObjectPtr pObj;
             ULONG uReturned;
 
             hr = pEnum->Next(
@@ -199,7 +193,7 @@ namespace mongo {
                 &pObj,
                 &uReturned);
             if (FAILED(hr)) {
-                pEnum->Release();
+                warning() << "IEnumWbemClassObject::ExecQuery failed with " << hr;
                 return false;
             }
 
@@ -209,9 +203,8 @@ namespace mongo {
 
             VARIANT value;
             hr = pObj->Get(L"HotFixID", 0, &value, NULL, NULL);
-            pObj->Release();
             if (FAILED(hr)) {
-                pEnum->Release();
+                warning() << "IWbemClassObject::Get failed with " << hr;
                 return false;
             }
 
@@ -219,12 +212,11 @@ namespace mongo {
             VariantClear(&value);
             hotfixIDs.push_back(hotfixID);
         }
-        pEnum->Release();
         return true;
     }
 
     bool getInstalledHotfixIDs(list<string> &hotfixIDs) {
-        if (CoInitializeEx(NULL, COINIT_APARTMENTTHREADED) != S_OK) {
+        if (CoInitializeEx(NULL, COINIT_MULTITHREADED) != S_OK) {
             return false;
         }
 
@@ -299,7 +291,7 @@ namespace mongo {
                             if (getInstalledHotfixIDs(hotfixIDs)) {
                               for(list< string >::const_iterator i = hotfixIDs.begin(); i != hotfixIDs.end(); ++i) {
                                 string hotfixID = *i;
-                                if (hotfixID == "KB2731284") {
+                                if (hotfixID == "KB2731284" || hotfixID == "KB2840149") {
                                   log() << "Hotfix for KB2731284 is installed, no need to zero-out data files";
                                   fileZeroNeeded = false;
                                   break;
